@@ -1,7 +1,9 @@
 from datetime import datetime
+from typing import Optional
 from uuid import uuid4
 from fastapi import APIRouter, Body, HTTPException, status
 from pydantic import UUID4
+from sqlalchemy import or_
 
 from workout_api.atleta.schemas import AtletaIn, AtletaOut, AtletaUpdate
 from workout_api.atleta.models import AtletaModel
@@ -10,6 +12,7 @@ from workout_api.centro_treinamento.models import CentroTreinamentoModel
 
 from workout_api.contrib.dependencies import DatabaseDependency
 from sqlalchemy.future import select
+from sqlalchemy.exc import IntegrityError
 
 router = APIRouter()
 
@@ -51,12 +54,17 @@ async def post(
 
         atleta_model.categoria_id = categoria.pk_id
         atleta_model.centro_treinamento_id = centro_treinamento.pk_id
-        
+
         db_session.add(atleta_model)
         await db_session.commit()
+    except IntegrityError:
+        raise HTTPException(
+            status_code=303,
+            detail=f'Já existe um atleta cadastrado com o cpf: {atleta_model.cpf}'
+        )
     except Exception:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Ocorreu um erro ao inserir os dados no banco'
         )
 
@@ -69,9 +77,15 @@ async def post(
     status_code=status.HTTP_200_OK,
     response_model=list[AtletaOut],
 )
-async def query(db_session: DatabaseDependency) -> list[AtletaOut]:
-    atletas: list[AtletaOut] = (await db_session.execute(select(AtletaModel))).scalars().all()
-    
+async def query(db_session: DatabaseDependency, nome: Optional[str] = None, cpf: Optional[str] = None) -> list[
+    AtletaOut]:
+    query = select(AtletaModel)
+
+    if nome or cpf:
+        query = query.where(or_(AtletaModel.nome == nome, AtletaModel.cpf == cpf))
+
+    atletas: list[AtletaOut] = (await db_session.execute(query)).scalars().all()
+
     return [AtletaOut.model_validate(atleta) for atleta in atletas]
 
 
